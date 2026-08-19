@@ -201,6 +201,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
   <button class="tab" onclick="ST('cashflow',this)">💰 Cash Flow</button>
   <button class="tab" onclick="ST('analise',this)">🔬 Análise Avançada</button>
   <button class="tab" onclick="ST('produtividade',this)">👤 Produtividade</button>
+  <button class="tab" onclick="ST('irregularidades',this)">⚠️ Irregularidades</button>
+  <button class="tab" onclick="ST('reversoes',this)">🔄 Reversões</button>
 </div>
 
 <!-- ═══ VISÃO GERAL ═══ -->
@@ -703,6 +705,247 @@ function rProd(){
   document.getElementById('t-prod-body').innerHTML=rows.map(function(r){return '<tr><td>'+r.op+'</td><td style="text-align:right">'+_fmt(r.sub)+'</td><td style="text-align:right">'+_fmt(r.lib)+'</td><td style="text-align:right">'+_fmt(r.ag)+'</td><td style="text-align:right;font-weight:700;color:#2563eb">'+_fmt(r.tot)+'</td></tr>';}).join('');
   document.getElementById('ph-prod').textContent=_fmt(rows.length)+' operadores';
   if(typeof kpi==='function')kpi('kg-prod',[{lb:'Submissores',vl:_fmt(Object.keys(mSub).filter(function(k){return k;}).length),cl:'p'},{lb:'Liberadores',vl:_fmt(Object.keys(mLib).filter(function(k){return k;}).length),cl:'o'},{lb:'Agendadores',vl:_fmt(Object.keys(mAg).filter(function(k){return k;}).length),cl:'g'},{lb:'Total Operacoes',vl:_fmt(rows.reduce(function(s,r){return s+r.tot;},0)),cl:'b'}]);
+}
+
+
+// ══ IRREGULARIDADES & REVERSÕES ══
+
+// ── helpers ──
+function _f2(n){return (n||0).toLocaleString('pt-BR');}
+
+function _ultimoDiaUtil(yyyymm){
+  // Recebe string 'YYYY-MM', retorna inteiro YYYYMMDD do último dia útil
+  var ano=parseInt(yyyymm.slice(0,4)), mes=parseInt(yyyymm.slice(5,7));
+  var ultimo=new Date(ano, mes, 0); // último dia do mês
+  while(ultimo.getDay()===0||ultimo.getDay()===6) ultimo.setDate(ultimo.getDate()-1);
+  var mm=String(ultimo.getMonth()+1).padStart(2,'0');
+  var dd=String(ultimo.getDate()).padStart(2,'0');
+  return parseInt(''+ano+mm+dd);
+}
+
+function _getIrrData(){
+  // Retorna array de objetos para análise de irregularidades
+  var dSub = DATES['Data Submissão']||[];
+  var dEmi = DATES['Data Emissão']||[];
+  var result=[];
+  for(var i=0;i<N;i++){
+    var dtEnvio=dSub[i]?dSub[i]:null;
+    var dtEmissao=dEmi[i]?dEmi[i]:null;
+    if(!dtEnvio||!dtEmissao) continue;
+    // dias entre emissão e envio
+    var sEnvio=String(dtEnvio), sEmi=String(dtEmissao);
+    var dEnvioD=new Date(parseInt(sEnvio.slice(0,4)),parseInt(sEnvio.slice(4,6))-1,parseInt(sEnvio.slice(6,8)));
+    var dEmiD=new Date(parseInt(sEmi.slice(0,4)),parseInt(sEmi.slice(4,6))-1,parseInt(sEmi.slice(6,8)));
+    var dias=Math.round((dEnvioD-dEmiD)/(1000*60*60*24));
+    // último dia útil do mês de emissão
+    var yyyymm=sEmi.slice(0,4)+'-'+sEmi.slice(4,6);
+    var limMes=_ultimoDiaUtil(yyyymm);
+    var ok48=dias<=2;
+    var okMes=dtEnvio<=limMes;
+    var status=ok48?'OK (<=48h)':(okMes?'Tardio (no mês)':'IRREGULAR');
+    var nat=D.Natureza?D.Natureza[E.Natureza?E.Natureza[i]:0]:'';
+    var sub=D.Submissor?D.Submissor[E.Submissor?E.Submissor[i]:0]:'';
+    var mes=sEmi.slice(4,6)+'/'+sEmi.slice(0,4);
+    result.push({status:status,nat:nat,sub:sub,mes:mes,dias:dias,irregular:status==='IRREGULAR'});
+  }
+  return result;
+}
+
+function rIrr(){
+  var data=_getIrrData();
+  var total=data.length;
+  var irr=data.filter(function(d){return d.irregular;});
+  var tardio=data.filter(function(d){return d.status==='Tardio (no mês)';});
+  var ok=data.filter(function(d){return d.status==='OK (<=48h)';});
+
+  // KPIs
+  if(typeof kpi==='function') kpi('kg-irr',[
+    {lb:'Total Analisado',vl:_f2(total),cl:'b'},
+    {lb:'OK (<=48h)',vl:_f2(ok.length),cl:'g'},
+    {lb:'Tardio (no mês)',vl:_f2(tardio.length),cl:'o'},
+    {lb:'IRREGULAR',vl:_f2(irr.length),cl:'r'}
+  ]);
+  document.getElementById('ph-irr').textContent=_f2(irr.length)+' irregulares';
+
+  // Donut — distribuição status
+  mkC('c-irr-status','doughnut',{
+    labels:['OK (<=48h)','Tardio (no mês)','IRREGULAR'],
+    datasets:[{data:[ok.length,tardio.length,irr.length],backgroundColor:['#10b981','#f59e0b','#ef4444'],borderWidth:2}]
+  },{...BASE,plugins:{...BASE.plugins,legend:{labels:{color:'#6b7a99',font:{size:10}}}}});
+
+  // Bar — irregulares por natureza
+  var mNat={};
+  irr.forEach(function(d){if(d.nat) mNat[d.nat]=(mNat[d.nat]||0)+1;});
+  var topNat=Object.entries(mNat).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  mkC('c-irr-nat','bar',{
+    labels:topNat.map(function(e){return e[0].length>28?e[0].slice(0,28)+'...':e[0];}),
+    datasets:[{label:'Irregulares',data:topNat.map(function(e){return e[1];}),backgroundColor:'#ef4444bb',borderRadius:4}]
+  },{...BASE,indexAxis:'y',plugins:{...BASE.plugins,legend:{display:false}},scales:{x:GX,y:{...GY,ticks:{color:'#6b7a99',font:{size:10}}}}});
+
+  // Bar — irregulares por submissor
+  var mSub={};
+  irr.forEach(function(d){if(d.sub) mSub[d.sub]=(mSub[d.sub]||0)+1;});
+  var topSub=Object.entries(mSub).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  mkC('c-irr-sub','bar',{
+    labels:topSub.map(function(e){return e[0].length>24?e[0].slice(0,24)+'...':e[0];}),
+    datasets:[{label:'Irregulares',data:topSub.map(function(e){return e[1];}),backgroundColor:'#f97316bb',borderRadius:4}]
+  },{...BASE,indexAxis:'y',plugins:{...BASE.plugins,legend:{display:false}},scales:{x:GX,y:{...GY,ticks:{color:'#6b7a99',font:{size:10}}}}});
+
+  // Line — irregulares por mês
+  var mMes={};
+  irr.forEach(function(d){if(d.mes) mMes[d.mes]=(mMes[d.mes]||0)+1;});
+  var meses=Object.keys(mMes).sort(function(a,b){
+    var pa=a.slice(3,7)+a.slice(0,2), pb=b.slice(3,7)+b.slice(0,2);
+    return pa.localeCompare(pb);
+  });
+  mkC('c-irr-mes','line',{
+    labels:meses,
+    datasets:[{label:'Irregulares',data:meses.map(function(m){return mMes[m]||0;}),borderColor:'#ef4444',backgroundColor:'#ef444422',fill:true,tension:0.3,pointRadius:4}]
+  },{...BASE,plugins:{...BASE.plugins,legend:{display:false}},scales:{x:{...GX,ticks:{...GX.ticks,maxRotation:45}},y:GY}});
+
+  // Matriz submissor x natureza
+  var subs=topSub.map(function(e){return e[0];});
+  var nats=topNat.slice(0,8).map(function(e){return e[0];});
+  var matrix={};
+  irr.forEach(function(d){
+    if(!matrix[d.sub]) matrix[d.sub]={};
+    matrix[d.sub][d.nat]=(matrix[d.sub][d.nat]||0)+1;
+  });
+  var thead='<thead><tr><th style="text-align:left;font-size:10px">Submissor</th>'+
+    nats.map(function(n){return '<th style="text-align:right;font-size:10px">'+n.slice(0,18)+'</th>';}).join('')+
+    '<th style="text-align:right;font-size:10px;font-weight:700">Total</th></tr></thead>';
+  var tbody='<tbody>'+subs.map(function(s){
+    var tot=mSub[s]||0;
+    return '<tr><td style="font-size:10px">'+s+'</td>'+
+      nats.map(function(n){
+        var v=matrix[s]&&matrix[s][n]?matrix[s][n]:0;
+        var bg=v>50?'background:#fee2e2':v>20?'background:#fef3c7':'';
+        return '<td style="text-align:right;font-size:10px;'+bg+'">'+_f2(v)+'</td>';
+      }).join('')+
+      '<td style="text-align:right;font-size:10px;font-weight:700;color:#ef4444">'+_f2(tot)+'</td></tr>';
+  }).join('')+'</tbody>';
+  document.getElementById('t-irr-matrix').innerHTML=thead+tbody;
+}
+
+// ══ REVERSÕES ══
+var _revEtapaAtual='processamento';
+var _revEtapas={
+  processamento:{rev:'Reversor do Processamento',resp:'Submissor',motivo:'Motivo Reversão do Processamento',data:'Data Submissão',label:'Processamento',cor:'#7c3aed'},
+  fiscalizacao:{rev:'Reversor da Fiscalização',resp:'Fiscal',motivo:'Motivo Reversão da Fiscalização',data:'Data Reversão da Fiscalização',label:'Fiscalização',cor:'#0891b2'},
+  liberacao:{rev:'Reversor da Liberação',resp:'Liberador',motivo:'Motivo Reversão da Liberação',data:'Data Reversão da Liberação',label:'Liberação',cor:'#d97706'},
+  agendamento:{rev:'Reversor do Agendamento',resp:'Agendador',motivo:'Motivo Reversão do Agendamento',data:'Data Reversão do Agendamento',label:'Agendamento',cor:'#059669'}
+};
+
+function selRevEtapa(etapa, btn){
+  _revEtapaAtual=etapa;
+  // Reset visual dos botões
+  ['processamento','fiscalizacao','liberacao','agendamento'].forEach(function(e){
+    var b=document.getElementById('btn-rev-'+e.slice(0,4));
+    if(b){b.style.background='#f1f5f9';b.style.color='#475569';b.style.border='1px solid #cbd5e1';b.style.fontWeight='normal';}
+  });
+  if(btn){btn.style.background='#2563eb';btn.style.color='#fff';btn.style.border='none';btn.style.fontWeight='600';}
+  rRev();
+}
+
+function _getRevData(etapa){
+  var cfg=_revEtapas[etapa];
+  var result=[];
+  for(var i=0;i<N;i++){
+    var reversor=D[cfg.rev]?D[cfg.rev][E[cfg.rev]?E[cfg.rev][i]:0]:'';
+    if(!reversor) continue;
+    var resp=D[cfg.resp]?D[cfg.resp][E[cfg.resp]?E[cfg.resp][i]:0]:'';
+    var motivo=D[cfg.motivo]?D[cfg.motivo][E[cfg.motivo]?E[cfg.motivo][i]:0]:'';
+    var dt=DATES[cfg.data]?DATES[cfg.data][i]:null;
+    var mes=dt?String(dt).slice(4,6)+'/'+String(dt).slice(0,4):'';
+    result.push({reversor:reversor,resp:resp,motivo:motivo,mes:mes});
+  }
+  return result;
+}
+
+function rRev(){
+  var etapa=_revEtapaAtual;
+  var cfg=_revEtapas[etapa];
+  var data=_getRevData(etapa);
+  var cor=cfg.cor;
+
+  // KPIs globais (todas etapas)
+  var totais={};
+  Object.keys(_revEtapas).forEach(function(e){
+    totais[e]=_getRevData(e).length;
+  });
+  if(typeof kpi==='function') kpi('kg-rev',[
+    {lb:'Processamento',vl:_f2(totais.processamento),cl:'p'},
+    {lb:'Fiscalização',vl:_f2(totais.fiscalizacao),cl:'b'},
+    {lb:'Liberação',vl:_f2(totais.liberacao),cl:'o'},
+    {lb:'Agendamento',vl:_f2(totais.agendamento),cl:'g'}
+  ]);
+  document.getElementById('ph-rev').textContent=_f2(data.length)+' reversões — '+cfg.label;
+
+  // Top reversores
+  var mRev={};
+  data.forEach(function(d){if(d.reversor) mRev[d.reversor]=(mRev[d.reversor]||0)+1;});
+  var topRev=Object.entries(mRev).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  mkC('c-rev-reversor','bar',{
+    labels:topRev.map(function(e){return e[0].length>24?e[0].slice(0,24)+'...':e[0];}),
+    datasets:[{label:'Reversões',data:topRev.map(function(e){return e[1];}),backgroundColor:cor+'bb',borderRadius:4}]
+  },{...BASE,indexAxis:'y',plugins:{...BASE.plugins,legend:{display:false}},scales:{x:GX,y:{...GY,ticks:{color:'#6b7a99',font:{size:10}}}}});
+
+  // Top responsáveis revertidos
+  var mResp={};
+  data.forEach(function(d){if(d.resp) mResp[d.resp]=(mResp[d.resp]||0)+1;});
+  var topResp=Object.entries(mResp).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
+  mkC('c-rev-resp','bar',{
+    labels:topResp.map(function(e){return e[0].length>24?e[0].slice(0,24)+'...':e[0];}),
+    datasets:[{label:'Revertidos',data:topResp.map(function(e){return e[1];}),backgroundColor:'#ef4444bb',borderRadius:4}]
+  },{...BASE,indexAxis:'y',plugins:{...BASE.plugins,legend:{display:false}},scales:{x:GX,y:{...GY,ticks:{color:'#6b7a99',font:{size:10}}}}});
+
+  // Reversões por mês
+  var mMes={};
+  data.forEach(function(d){if(d.mes) mMes[d.mes]=(mMes[d.mes]||0)+1;});
+  var meses=Object.keys(mMes).sort(function(a,b){
+    var pa=a.slice(3,7)+a.slice(0,2), pb=b.slice(3,7)+b.slice(0,2);
+    return pa.localeCompare(pb);
+  });
+  mkC('c-rev-mes','bar',{
+    labels:meses,
+    datasets:[{label:'Reversões',data:meses.map(function(m){return mMes[m]||0;}),backgroundColor:cor+'bb',borderRadius:4}]
+  },{...BASE,plugins:{...BASE.plugins,legend:{display:false}},scales:{x:{...GX,ticks:{...GX.ticks,maxRotation:45}},y:GY}});
+
+  // Top motivos (extrair primeiras palavras)
+  var mMot={};
+  data.forEach(function(d){
+    if(!d.motivo) return;
+    var m=d.motivo.slice(0,60).replace(/\n/g,' ').trim();
+    if(m) mMot[m]=(mMot[m]||0)+1;
+  });
+  var topMot=Object.entries(mMot).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+  mkC('c-rev-motivos','bar',{
+    labels:topMot.map(function(e){return e[0].length>40?e[0].slice(0,40)+'...':e[0];}),
+    datasets:[{label:'Ocorrências',data:topMot.map(function(e){return e[1];}),backgroundColor:'#64748bbb',borderRadius:4}]
+  },{...BASE,indexAxis:'y',plugins:{...BASE.plugins,legend:{display:false}},scales:{x:GX,y:{...GY,ticks:{color:'#6b7a99',font:{size:9}}}}});
+
+  // Tabela reversor x responsável revertido
+  var pares={};
+  var motPares={};
+  data.forEach(function(d){
+    var key=d.reversor+'|||'+d.resp;
+    pares[key]=(pares[key]||0)+1;
+    if(d.motivo){
+      if(!motPares[key]) motPares[key]=[];
+      if(motPares[key].length<3) motPares[key].push(d.motivo.slice(0,50));
+    }
+  });
+  var linhas=Object.entries(pares).sort(function(a,b){return b[1]-a[1];}).slice(0,30);
+  document.getElementById('t-rev-body').innerHTML=linhas.map(function(e){
+    var parts=e[0].split('|||');
+    var mots=(motPares[e[0]]||[]).join(' / ');
+    return '<tr>'+
+      '<td>'+parts[0]+'</td>'+
+      '<td style="color:#ef4444">'+parts[1]+'</td>'+
+      '<td style="text-align:right;font-weight:700">'+_f2(e[1])+'</td>'+
+      '<td style="font-size:10px;color:#64748b;max-width:300px;word-break:break-word">'+mots+'</td>'+
+      '</tr>';
+  }).join('');
 }
 
 function renderFunnel(){
@@ -1533,6 +1776,62 @@ function rAnalise(){
       <div style="overflow-x:auto"><table class="qtbl" style="width:100%">
         <thead><tr><th style="text-align:left">Operador</th><th style="text-align:right">Submissões</th><th style="text-align:right">Liberações</th><th style="text-align:right">Agendamentos</th><th style="text-align:right">Total</th></tr></thead>
         <tbody id="t-prod-body"></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ IRREGULARIDADES ═══ -->
+<div class="page" id="page-irregularidades">
+  <div class="ph"><div class="ph-i">⚠️</div><div><div class="ph-t">Irregularidades de Envio</div><div class="ph-d">Despesas enviadas fora do prazo: após 48h da emissão E após o último dia útil do mês de emissão.</div></div><div class="ph-c" id="ph-irr">—</div></div>
+  <div class="kg" id="kg-irr"></div>
+  <div class="cg">
+    <div class="cb"><h3>Irregulares por Natureza</h3><div class="cs">Top naturezas com mais envios irregulares</div><canvas id="c-irr-nat" height="280"></canvas></div>
+    <div class="cb"><h3>Irregulares por Submissor</h3><div class="cs">Top usuários com mais envios fora do prazo</div><canvas id="c-irr-sub" height="280"></canvas></div>
+  </div>
+  <div class="cg">
+    <div class="cb"><h3>Distribuição por Status de Envio</h3><div class="cs">Conformidade geral da base</div><canvas id="c-irr-status" height="260"></canvas></div>
+    <div class="cb"><h3>Irregulares por Mês de Emissão</h3><div class="cs">Evolução mensal das irregularidades</div><canvas id="c-irr-mes" height="260"></canvas></div>
+  </div>
+  <div class="cg">
+    <div class="cb" style="grid-column:1/-1"><h3>Detalhamento — Irregulares por Submissor x Natureza</h3><div class="cs">Cruzamento quantitativo: cada célula mostra o número de envios irregulares</div>
+      <div style="overflow-x:auto"><table class="qtbl" style="width:100%;font-size:11px" id="t-irr-matrix"></table></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ REVERSÕES ═══ -->
+<div class="page" id="page-reversoes">
+  <div class="ph"><div class="ph-i">🔄</div><div><div class="ph-t">Análise de Reversões</div><div class="ph-d">Reversões por etapa do processo — quem reverteu e quem havia executado o passo anterior.</div></div><div class="ph-c" id="ph-rev">—</div></div>
+  <div class="kg" id="kg-rev"></div>
+  <!-- Seletor de etapa -->
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:10px 16px;margin-bottom:4px">
+    <div style="font-size:11px;font-weight:600;color:var(--muted,#64748b)">Etapa:</div>
+    <button onclick="selRevEtapa('processamento',this)" id="btn-rev-proc" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer">Processamento</button>
+    <button onclick="selRevEtapa('fiscalizacao',this)" id="btn-rev-fisc" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer">Fiscalização</button>
+    <button onclick="selRevEtapa('liberacao',this)" id="btn-rev-lib" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer">Liberação</button>
+    <button onclick="selRevEtapa('agendamento',this)" id="btn-rev-ag" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:6px;padding:5px 12px;font-size:11px;cursor:pointer">Agendamento</button>
+  </div>
+  <div class="cg">
+    <div class="cb"><h3>Top Reversores</h3><div class="cs" id="cs-rev-reversor">Quem mais realizou reversões nessa etapa</div><canvas id="c-rev-reversor" height="280"></canvas></div>
+    <div class="cb"><h3>Top Responsáveis Revertidos</h3><div class="cs" id="cs-rev-resp">Cujo trabalho foi mais revertido nessa etapa</div><canvas id="c-rev-resp" height="280"></canvas></div>
+  </div>
+  <div class="cg">
+    <div class="cb"><h3>Reversões por Mês</h3><div class="cs">Volume mensal de reversões na etapa selecionada</div><canvas id="c-rev-mes" height="240"></canvas></div>
+    <div class="cb"><h3>Top Motivos de Reversão</h3><div class="cs">Motivos mais frequentes registrados</div><canvas id="c-rev-motivos" height="240"></canvas></div>
+  </div>
+  <div class="cg">
+    <div class="cb" style="grid-column:1/-1"><h3>Tabela: Reversor × Responsável Revertido</h3><div class="cs">Cada linha mostra quem reverteu, quem havia executado o passo, e quantas vezes</div>
+      <div style="overflow-x:auto"><table class="qtbl" style="width:100%">
+        <thead><tr>
+          <th style="text-align:left">Reversor</th>
+          <th style="text-align:left">Responsável Revertido</th>
+          <th style="text-align:right">Qtd Reversões</th>
+          <th style="text-align:left">Motivos Frequentes</th>
+        </tr></thead>
+        <tbody id="t-rev-body"></tbody>
       </table></div>
     </div>
   </div>
