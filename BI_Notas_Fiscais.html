@@ -755,7 +755,8 @@ function _f22(n){return (n||0).toLocaleString('pt-BR');}
 
 function rIrr2(){
   var dSub=DATES['Data Submissão']||[], dEmi=DATES['Data Emissão']||[];
-  var ok=0, tardio=0, irr=0, mRem={}, mMes={}, matrix={}, mNat={};
+  var mRem={};  // {rem: {ok, tardio, irr}}
+  var mNat={}, mMes={};
   for(var i=0;i<N;i++){
     if(!MASK[i]) continue;
     var dtE=dSub[i], dtM=dEmi[i];
@@ -766,48 +767,110 @@ function rIrr2(){
     var rem=D.Remetente&&E.Remetente?D.Remetente[E.Remetente[i]]||'':'';
     var nat=D.Natureza&&E.Natureza?D.Natureza[E.Natureza[i]]||'':'';
     var mes=sM.slice(4,6)+'/'+sM.slice(0,4);
+    if(!mRem[rem]) mRem[rem]={ok:0,tardio:0,irr:0};
     if(dias<=2){
-      ok++;
+      mRem[rem].ok++;
     } else if(dtE<=limMes){
-      tardio++;
-      if(rem){mRem[rem]=(mRem[rem]||0)+1;if(!matrix[rem])matrix[rem]={};matrix[rem][nat]=(matrix[rem][nat]||0)+1;}
+      mRem[rem].tardio++;
       if(nat)mNat[nat]=(mNat[nat]||0)+1;
       if(mes)mMes[mes]=(mMes[mes]||0)+1;
     } else {
-      irr++;
-      if(rem){mRem[rem]=(mRem[rem]||0)+1;if(!matrix[rem])matrix[rem]={};matrix[rem][nat]=(matrix[rem][nat]||0)+1;}
+      mRem[rem].irr++;
       if(nat)mNat[nat]=(mNat[nat]||0)+1;
       if(mes)mMes[mes]=(mMes[mes]||0)+1;
     }
   }
-  var total=ok+tardio+irr;
-  var pct=function(n){return total>0?' ('+Math.round(n/total*100)+'%)':'';};
-  var fora=tardio+irr;
+  // Totais
+  var ok=0,tardio=0,irr=0;
+  Object.values(mRem).forEach(function(r){ok+=r.ok;tardio+=r.tardio;irr+=r.irr;});
+  var total=ok+tardio+irr, fora=tardio+irr;
+  var pct=function(n){return total>0?' '+Math.round(n/total*100)+'%':'';};
+  
+  // Header
   var el=document.getElementById('ph-irr');
   if(el) el.textContent=_f22(fora)+' fora do prazo de '+_f22(total);
-  if(typeof kpi==='function'){
-    var kg=document.getElementById('kg-irr');
-    if(kg) kpi('kg-irr',[
+
+  // KPIs clicaveis
+  var kg=document.getElementById('kg-irr');
+  if(kg&&typeof kpi==='function'){
+    kpi('kg-irr',[
       {lb:'No prazo (<=48h)',vl:_f22(ok)+pct(ok),cl:'g'},
       {lb:'Tardio (no mês)',vl:_f22(tardio)+pct(tardio),cl:'o'},
       {lb:'Irregular (fora do mês)',vl:_f22(irr)+pct(irr),cl:'r'},
       {lb:'Total analisado',vl:_f22(total),cl:'b'}
     ]);
+    // Tornar KPIs clicaveis
+    setTimeout(function(){
+      var cards=kg.querySelectorAll('.kpi-card,.kc');
+      var labels=['ok','tardio','irr','todos'];
+      cards.forEach(function(c,i){
+        c.style.cursor='pointer';
+        c.style.transition='box-shadow 0.2s';
+        c.onclick=function(){
+          cards.forEach(function(x){x.style.boxShadow='';x.style.outline='';});
+          c.style.outline='2px solid #2563eb';
+          _filtroIrr=labels[i]||'todos';
+          _renderIrrTabela(mRem,ok,tardio,irr,total);
+          _renderIrrGraficos(mRem,mNat,mMes,ok,tardio,irr);
+        };
+      });
+    },200);
   }
+
+  _filtroIrr=_filtroIrr||'todos';
+  _renderIrrTabela(mRem,ok,tardio,irr,total);
+  _renderIrrGraficos(mRem,mNat,mMes,ok,tardio,irr);
+}
+
+var _filtroIrr='todos';
+
+function _renderIrrTabela(mRem,ok,tardio,irr,total){
+  var rows=Object.entries(mRem).filter(function(e){return e[0];}).map(function(e){
+    var r=e[1]; var tot=r.ok+r.tardio+r.irr; var fora=r.tardio+r.irr;
+    return {rem:e[0],ok:r.ok,tardio:r.tardio,irr:r.irr,tot:tot,fora:fora,pctFora:tot>0?Math.round(fora/tot*100):0};
+  });
+  // Filtrar por status selecionado
+  if(_filtroIrr==='ok') rows=rows.filter(function(r){return r.ok>0;}).sort(function(a,b){return b.ok-a.ok;});
+  else if(_filtroIrr==='tardio') rows=rows.filter(function(r){return r.tardio>0;}).sort(function(a,b){return b.tardio-a.tardio;});
+  else if(_filtroIrr==='irr') rows=rows.filter(function(r){return r.irr>0;}).sort(function(a,b){return b.irr-a.irr;});
+  else rows.sort(function(a,b){return b.fora-a.fora;});
+  
+  var h=document.getElementById('h-irr-tabela');
+  var cs=document.getElementById('cs-irr-tabela');
+  var labels={ok:'No prazo',tardio:'Tardio',irr:'Irregular',todos:'Todos os status'};
+  if(h) h.textContent='Envios por Remetente — '+labels[_filtroIrr||'todos'];
+  if(cs) cs.textContent=rows.length+' remetentes';
+  
+  var tb=document.getElementById('t-irr-body');
+  if(!tb) return;
+  tb.innerHTML=rows.map(function(r){
+    var pctBg=r.pctFora>50?'#fee2e2':r.pctFora>20?'#fef3c7':'';
+    return '<tr>'+
+      '<td>'+r.rem+'</td>'+
+      '<td style="text-align:right;color:#10b981">'+_f22(r.ok)+'</td>'+
+      '<td style="text-align:right;color:#f59e0b">'+_f22(r.tardio)+'</td>'+
+      '<td style="text-align:right;color:#ef4444">'+_f22(r.irr)+'</td>'+
+      '<td style="text-align:right;font-weight:700">'+_f22(r.tot)+'</td>'+
+      '<td style="text-align:right;font-weight:700;background:'+pctBg+'">'+r.pctFora+'%</td>'+
+      '</tr>';
+  }).join('');
+}
+
+function _renderIrrGraficos(mRem,mNat,mMes,ok,tardio,irr){
+  // Grafico por natureza (tardio+irr)
   var topNat=Object.entries(mNat).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
-  var topRem=Object.entries(mRem).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
   _mkCLocal2('c-irr-nat','bar',{labels:topNat.map(function(e){return e[0].length>28?e[0].slice(0,28)+'...':e[0];}),datasets:[{label:'Fora do prazo',data:topNat.map(function(e){return e[1];}),backgroundColor:'#ef4444bb',borderRadius:4}]},_optsH());
+  // Grafico por remetente (top fora do prazo)
+  var topRem=Object.entries(mRem).filter(function(e){return e[0]&&(e[1].tardio+e[1].irr)>0;}).map(function(e){return [e[0],e[1].tardio+e[1].irr];}).sort(function(a,b){return b[1]-a[1];}).slice(0,12);
   _mkCLocal2('c-irr-sub','bar',{labels:topRem.map(function(e){return e[0].length>24?e[0].slice(0,24)+'...':e[0];}),datasets:[{label:'Fora do prazo',data:topRem.map(function(e){return e[1];}),backgroundColor:'#f97316bb',borderRadius:4}]},_optsH());
+  // Donut
   _mkCLocal2('c-irr-status','doughnut',{
     labels:['No prazo (<=48h)','Tardio (no mês)','Irregular (fora do mês)'],
     datasets:[{data:[ok,tardio,irr],backgroundColor:['#10b981','#f59e0b','#ef4444'],borderWidth:2}]
   },_optsDoughnut());
+  // Por mes
   var meses=Object.keys(mMes).sort(function(a,b){return (a.slice(3,7)+a.slice(0,2)).localeCompare(b.slice(3,7)+b.slice(0,2));});
   _mkCLocal2('c-irr-mes','bar',{labels:meses,datasets:[{label:'Fora do prazo',data:meses.map(function(m){return mMes[m]||0;}),backgroundColor:'#ef4444bb',borderRadius:4}]},_optsV());
-  var topNat8=topNat.slice(0,8), nats=topNat8.map(function(e){return e[0];}), rems=topRem.map(function(e){return e[0];});
-  var thead='<thead><tr><th style="text-align:left;font-size:10px">Remetente</th>'+nats.map(function(n){return '<th style="text-align:right;font-size:10px">'+n.slice(0,16)+'</th>';}).join('')+'<th style="text-align:right;font-size:10px;font-weight:700">Total</th></tr></thead>';
-  var tbody='<tbody>'+rems.map(function(r){var tot=mRem[r]||0;return '<tr><td style="font-size:10px">'+r+'</td>'+nats.map(function(n){var v=matrix[r]&&matrix[r][n]?matrix[r][n]:0;var bg=v>50?'background:#fee2e2':v>20?'background:#fef3c7':'';return '<td style="text-align:right;font-size:10px;'+bg+'">'+_f22(v)+'</td>';}).join('')+'<td style="text-align:right;font-size:10px;font-weight:700;color:#ef4444">'+_f22(tot)+'</td></tr>';}).join('')+'</tbody>';
-  var ti=document.getElementById('t-irr-matrix'); if(ti) ti.innerHTML=thead+tbody;
 }
 
 var _revEtapaAtual2='processamento';
@@ -1715,8 +1778,20 @@ function rAnalise(){
     <div class="cb"><h3>Envios Fora do Prazo por Mês</h3><div style="position:relative;height:260px"><canvas id="c-irr-mes"></canvas></div></div>
   </div>
   <div class="cg">
-    <div class="cb" style="grid-column:1/-1"><h3>Detalhamento — Envios Fora do Prazo por Remetente x Natureza</h3>
-      <div style="overflow-x:auto"><table class="qtbl" style="width:100%;font-size:11px" id="t-irr-matrix"></table></div>
+    <div class="cb" style="grid-column:1/-1">
+      <h3 id="h-irr-tabela">Envios por Remetente</h3>
+      <div class="cs" id="cs-irr-tabela">Clique em um status acima para filtrar</div>
+      <div style="overflow-x:auto"><table class="qtbl" style="width:100%">
+        <thead><tr>
+          <th style="text-align:left">Remetente</th>
+          <th style="text-align:right;color:#10b981">No prazo</th>
+          <th style="text-align:right;color:#f59e0b">Tardio</th>
+          <th style="text-align:right;color:#ef4444">Irregular</th>
+          <th style="text-align:right">Total</th>
+          <th style="text-align:right;color:#ef4444">% Fora</th>
+        </tr></thead>
+        <tbody id="t-irr-body"></tbody>
+      </table></div>
     </div>
   </div>
 </div>
