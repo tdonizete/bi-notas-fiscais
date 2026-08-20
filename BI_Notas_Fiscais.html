@@ -638,6 +638,7 @@ function rProd(){
 }
 
 
+
 // == IRREGULARIDADES & REVERSOES ==
 function _mkCLocal2(id, type, data, opts){
   var el = document.getElementById(id);
@@ -1481,7 +1482,7 @@ function rAdm(){
   stages.forEach(s=>{const st=stat(s.col,iA);tb.insertAdjacentHTML('beforeend',`<tr><td style="font-weight:${s.col==='d_total'?700:400}">${s.lb}</td><td class="nm">${st.mean!==null?st.mean:'-'}</td><td class="nm">${st.median!==null?st.median:'-'}</td><td class="nm">${st.p90!==null?st.p90:'-'}</td><td class="nm" style="color:var(--muted)">${fN(st.n)}</td></tr>`);});
 }
 
-function renderAll(){rVG();rProd();rRec();rProc();rFisc();rLib();rAg();rPrazos();rRev();rAdm();rUrgencia();}
+function renderAll(){rVG();rProd();rRec();rProc();rFisc();rLib();rAg();rPrazos();rRev();rAdm();rUrgencia();var _pa=document.getElementById("page-irregularidades");var _pr=document.getElementById("page-reversoes");if(typeof rIrr2==="function"&&_pa&&window.getComputedStyle(_pa).display!=="none")setTimeout(rIrr2,50);if(typeof rRev2==="function"&&_pr&&window.getComputedStyle(_pr).display!=="none")setTimeout(rRev2,50);}
 
 
 // ── INIT ──
@@ -1828,6 +1829,7 @@ function rAnalise(){
     </div>
   </div>
 </div>
+
 
 
 <div class="page" id="page-irregularidades">
